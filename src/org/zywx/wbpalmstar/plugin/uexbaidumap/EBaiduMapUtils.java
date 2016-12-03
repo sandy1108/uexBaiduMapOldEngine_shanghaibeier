@@ -5,7 +5,9 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.StateListDrawable;
+import android.os.Environment;
 import android.util.Log;
+import android.webkit.CookieManager;
 import android.webkit.URLUtil;
 
 import com.baidu.mapapi.model.LatLng;
@@ -13,6 +15,7 @@ import com.baidu.mapapi.search.route.PlanNode;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.cookie.SM;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.params.BasicHttpParams;
 import org.apache.http.params.HttpConnectionParams;
@@ -21,12 +24,17 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.zywx.wbpalmstar.base.BDebug;
 import org.zywx.wbpalmstar.base.BUtility;
+import org.zywx.wbpalmstar.engine.EBrowserView;
 import org.zywx.wbpalmstar.engine.universalex.EUExUtil;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class EBaiduMapUtils {
 	// 1
@@ -84,6 +92,8 @@ public class EBaiduMapUtils {
 	public static final int MAP_MSG_CODE_HIDEMAP = 46;
 	public static final int MAP_MSG_CODE_SHOWMAP = 47;
 	public static final int MAP_MSG_CODE_ZOOMCONTROLSENABLED = 48;
+	public static final int MAP_MSG_CODE_GETDISTANCE = 49;
+	public static final int MAP_MSG_CODE_GETCENTER = 50;
 	// 3
 	public final static String MAP_EXTRA_LAN = "org.zywx.wbpalmstar.plugin.uexbaidumap.MAP_EXTRA_LAN";
 	public final static String MAP_EXTRA_LNG = "org.zywx.wbpalmstar.plugin.uexbaidumap.MAP_EXTRA_LNG";
@@ -94,16 +104,24 @@ public class EBaiduMapUtils {
 	public final static String MAP_PARAMS_JSON_KEY_ID = "id";
 	public final static String MAP_PARAMS_JSON_KEY_LNG = "longitude";
 	public final static String MAP_PARAMS_JSON_KEY_LAT = "latitude";
+	public final static String MAP_PARAMS_JSON_KEY_DISTANCE = "distance";// by_waka_新增字段distance
 	public final static String MAP_PARAMS_JSON_KEY_ICON = "icon";
 	public final static String MAP_PARAMS_JSON_KEY_BUBBLE = "bubble";
+
 	public final static String MAP_PARAMS_JSON_KEY_TYPE_SHANGHAI_BEIER = "type";// 气泡类型，用来区分气泡风格
 	public final static String MAP_PARAMS_JSON_KEY_WIDTH_SHANGHAI_BEIER = "width";// 气泡宽度
 	public final static String MAP_PARAMS_JSON_KEY_BG_COLOR_SHANGHAI_BEIER = "bgColor";// 背景颜色
 	public final static String MAP_PARAMS_JSON_KEY_TITLE_LEFT_TOP_SHANGHAI_BEIER = "title1";// 左上角文本
 	public final static String MAP_PARAMS_JSON_KEY_TITLE_RIGHT_TOP_SHANGHAI_BEIER = "title2";// 右上角文本
 	public final static String MAP_PARAMS_JSON_KEY_TITLE_BOTTOM_SHANGHAI_BEIER = "title3";// 下方文本
+
 	public final static String MAP_PARAMS_JSON_KEY_TITLE = "title";
 	public final static String MAP_PARAMS_JSON_KEY_SUBTITLE = "subTitle";
+	public final static String MAP_PARAMS_JSON_KEY_BOTTOMCARD = "bottomCard";
+	public final static String MAP_PARAMS_JSON_KEY_CARDTITLE1 = "cardTitle1";
+	public final static String MAP_PARAMS_JSON_KEY_CARDTITLE2 = "cardTitle2";
+	public final static String MAP_PARAMS_JSON_KEY_CARDTITLE3 = "cardTitle3";
+	public final static String MAP_PARAMS_JSON_KEY_CARDTITLE4 = "cardTitle4";
 	public final static String MAP_PARAMS_JSON_KEY_BGIMG = "bgImage";
 	public final static String MAP_PARAMS_JSON_KEY_YOFFSET = "yOffset";
 	public final static String MAP_PARAMS_JSON_KEY_ADDRESS = "address";
@@ -177,6 +195,9 @@ public class EBaiduMapUtils {
 	public final static String MAP_FUN_CB_POISEARCH_RESULT = "uexBaiduMap.cbPoiSearchResult";
 	public final static String MAP_FUN_CB_BUSLINE_SEARCH_RESULT = "uexBaiduMap.cbBusLineSearchResult";
 	public final static String MAP_FUN_CB_OPEN = "uexBaiduMap.cbOpen";
+	public final static String MAP_FUN_CB_GETCENTER = "uexBaiduMap.cbGetCenter";
+
+	public final static String MAP_FUN_CB_GET_DISTANCE = "uexBaiduMap.cbGetDistance";// 计算两点之间的距离by_waka
 
 	// 气泡类型常量 by waka
 	public static final String MAP_BUBBLE_TYPE_SHANGHAI_BEIER = "1";// 上海贝尔项目定制气泡
@@ -194,7 +215,9 @@ public class EBaiduMapUtils {
 
 	public static StateListDrawable bgColorDrawableSelector(Bitmap nomal, Bitmap focus) {
 
+		@SuppressWarnings("deprecation")
 		BitmapDrawable nomalBitmap = new BitmapDrawable(nomal);
+		@SuppressWarnings("deprecation")
 		BitmapDrawable focusBitmap = new BitmapDrawable(focus);
 		StateListDrawable selector = new StateListDrawable();
 		selector.addState(new int[] { android.R.attr.state_pressed }, focusBitmap);
@@ -210,40 +233,94 @@ public class EBaiduMapUtils {
 		}
 
 		Bitmap bitmap = null;
-		InputStream is = null;
-		try {
-			if (imgUrl.startsWith(BUtility.F_Widget_RES_SCHEMA)) {
-				is = BUtility.getInputStreamByResPath(ctx, imgUrl);
-				bitmap = BitmapFactory.decodeStream(is);
-			} else if (imgUrl.startsWith(BUtility.F_FILE_SCHEMA)) {
-				imgUrl = imgUrl.replace(BUtility.F_FILE_SCHEMA, "");
-				bitmap = BitmapFactory.decodeFile(imgUrl);
-			} else if (imgUrl.startsWith(BUtility.F_Widget_RES_path)) {
-				try {
-					is = ctx.getAssets().open(imgUrl);
-					if (is != null) {
-						bitmap = BitmapFactory.decodeStream(is);
+		EBaiduMapBaseActivity activity = (EBaiduMapBaseActivity) ctx;
+		if (null != activity) {
+			EUExBaiduMap baiduMap = activity.getUexBaseObj();
+			if (null != baiduMap) {
+				EBrowserView eBrwView = baiduMap.getEBrowserView();
+				imgUrl = makeRealPath(imgUrl, eBrwView);// 因为当前引擎中没有makeRealPath这个方法，所以使用当前类的方法
+				if (imgUrl.startsWith(BUtility.F_Widget_RES_path)) {
+					InputStream is = null;
+					try {
+						is = ctx.getAssets().open(imgUrl);
+						if (is != null) {
+							bitmap = BitmapFactory.decodeStream(is);
+						}
+					} catch (IOException e) {
+						e.printStackTrace();
+					} finally {
+						if (is != null) {
+							try {
+								is.close();
+							} catch (IOException e) {
+								e.printStackTrace();
+							}
+						}
 					}
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-			} else if (imgUrl.startsWith("/")) {
-				bitmap = BitmapFactory.decodeFile(imgUrl);
-			} else if (imgUrl.startsWith("http://")) {
-
-			}
-		} catch (OutOfMemoryError e) {
-			e.printStackTrace();
-		} finally {
-			if (is != null) {
-				try {
-					is.close();
-				} catch (IOException e) {
-					e.printStackTrace();
+				} else if (imgUrl.startsWith("/")) {
+					bitmap = BitmapFactory.decodeFile(imgUrl);
+				} else if (imgUrl.startsWith("http://")) {
+					bitmap = makeBitmapForHttp(ctx, imgUrl);
 				}
 			}
 		}
 		return bitmap;
+	}
+
+	/**
+	 * 因为这个方法当前引擎中没有，所以自己写一下
+	 * 
+	 * @param path
+	 * @param browserView
+	 * @return
+	 */
+	private static String makeRealPath(String path, EBrowserView browserView) {
+		path = BUtility.makeUrl(browserView.getCurrentUrl(), path);
+		int wgtType = browserView.getCurrentWidget().m_wgtType;
+		String widgetPath = browserView.getCurrentWidget().getWidgetPath();
+		return BUtility.makeRealPath(path, widgetPath, wgtType);
+	}
+
+	private static Bitmap makeBitmapForHttp(Context ctx, String imgUrl) {
+		Bitmap bitmap = null;
+		try {
+			URL uRL = new URL(imgUrl);
+			HttpURLConnection connection = (HttpURLConnection) uRL.openConnection();
+			String cookie = CookieManager.getInstance().getCookie(imgUrl);
+			if (null != cookie) {
+				connection.setRequestProperty(SM.COOKIE, cookie);
+			}
+			connection.connect();
+			if (200 == connection.getResponseCode()) {
+				InputStream input = connection.getInputStream();
+				if (input != null) {
+					Environment.getDownloadCacheDirectory();
+					File ecd = ctx.getExternalCacheDir();
+					File file = new File(ecd, "markBgImage" + makeFileSuffix(imgUrl));
+					OutputStream outStream = new FileOutputStream(file);
+					byte buf[] = new byte[8 * 1024];
+					while (true) {
+						int numread = input.read(buf);
+						if (numread == -1) {
+							break;
+						}
+						outStream.write(buf, 0, numread);
+					}
+					bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return bitmap;
+	}
+
+	private static String makeFileSuffix(String url) {
+		int index = url.lastIndexOf(".");
+		if (index < 0) {
+			return null;
+		}
+		return url.substring(index + 1);
 	}
 
 	public static EBaiduMapMarkerOverlayOptions getMarkerOverlayOpitonsWithJSON(String jsonStr) {
@@ -302,6 +379,8 @@ public class EBaiduMapUtils {
 			String title2 = null;// 右上角文本
 			String title3 = null;// 下方文本
 
+			String bottomBubbleCard = null;
+
 			if (makerJsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_BUBBLE)) {
 
 				String bubbleStr = makerJsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_BUBBLE);
@@ -323,6 +402,7 @@ public class EBaiduMapUtils {
 
 				if (bubbleJsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_YOFFSET)) {
 					yOffset = bubbleJsonObject.getInt(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_YOFFSET);
+
 					isUseYOffset = true;
 				} else {
 					isUseYOffset = false;
@@ -346,6 +426,10 @@ public class EBaiduMapUtils {
 				if (bubbleJsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_TITLE_BOTTOM_SHANGHAI_BEIER)) {
 					title3 = bubbleJsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_TITLE_BOTTOM_SHANGHAI_BEIER);
 				}
+
+				if (bubbleJsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_BOTTOMCARD)) {
+					bottomBubbleCard = bubbleJsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_BOTTOMCARD);
+				}
 			}
 
 			markerOverlayOptions.setBubbleBgImgPath(bgImgPath);
@@ -360,6 +444,8 @@ public class EBaiduMapUtils {
 			markerOverlayOptions.setTitle1(title1);
 			markerOverlayOptions.setTitle2(title2);
 			markerOverlayOptions.setTitle3(title3);
+
+			markerOverlayOptions.setBottomBubbleCard(bottomBubbleCard);
 
 		} catch (JSONException e) {
 			e.printStackTrace();
@@ -662,12 +748,9 @@ public class EBaiduMapUtils {
 			arcInfo.setIdStr(json.getString(MAP_PARAMS_JSON_KEY_ID));
 			arcInfo.setStrokeColor(json.getString(MAP_PARAMS_JSON_KEY_STROKECOLOR));
 			arcInfo.setLineWidth(json.getString(MAP_PARAMS_JSON_KEY_LINEWIDTH));
-			arcInfo.setStart(json.getDouble(MAP_PARAMS_JSON_KEY_START_LATITUDE),
-					json.getDouble(MAP_PARAMS_JSON_KEY_START_LONGITUDE));
-			arcInfo.setCenter(json.getDouble(MAP_PARAMS_JSON_KEY_CENTER_LATITUDE),
-					json.getDouble(MAP_PARAMS_JSON_KEY_CENTER_LONGITUDE));
-			arcInfo.setEnd(json.getDouble(MAP_PARAMS_JSON_KEY_END_LATITUDE),
-					json.getDouble(MAP_PARAMS_JSON_KEY_END_LONGITUDE));
+			arcInfo.setStart(json.getDouble(MAP_PARAMS_JSON_KEY_START_LATITUDE), json.getDouble(MAP_PARAMS_JSON_KEY_START_LONGITUDE));
+			arcInfo.setCenter(json.getDouble(MAP_PARAMS_JSON_KEY_CENTER_LATITUDE), json.getDouble(MAP_PARAMS_JSON_KEY_CENTER_LONGITUDE));
+			arcInfo.setEnd(json.getDouble(MAP_PARAMS_JSON_KEY_END_LATITUDE), json.getDouble(MAP_PARAMS_JSON_KEY_END_LONGITUDE));
 			if (json.has(MAP_PARAMS_JSON_KEY_EXTRAINFO)) {
 				arcInfo.setExtraStr(json.getString(MAP_PARAMS_JSON_KEY_EXTRAINFO));
 			}
@@ -795,20 +878,20 @@ public class EBaiduMapUtils {
 
 	/**
 	 * 颜色审判（判断字符串是否是颜色格式） by_waka_2016-01-26
-	 * 
+	 *
 	 * @param colorStr
 	 * @return
 	 */
 	public static String colorJudgment(String colorStr) {
 		// 判断颜色格式，第一道关卡，字符数不等于7或9的直接return;
 		if (!(colorStr.length() == 7 || colorStr.length() == 9)) {
-			Log.i("uexBaiduMap colorJudgment", "颜色长度不为7或者9");
+			Log.i("uexBaiduMap", "颜色长度不为7或者9");
 			return null;
 		}
 
 		// 如果colorStr第一位不是'#'，return
 		if (colorStr.charAt(0) != '#') {
-			Log.i("uexBaiduMap colorJudgment", "colorStr第一位不是'#'");
+			Log.i("uexBaiduMap", "colorStr第一位不是'#'");
 			return null;
 		}
 
@@ -826,7 +909,7 @@ public class EBaiduMapUtils {
 			int ascii_c = c;// 获得该字符ascii码
 			// 如果该字符不在规定范围内，return
 			if (ascii_c < 48 || (ascii_c > 57 && ascii_c < 65) || (ascii_c > 70 && ascii_c < 97) || ascii_c > 102) {
-				Log.i("uexBaiduMap colorJudgment", "colorStr存在字符不在规定范围内");
+				Log.i("uexBaiduMap", "colorStr存在字符不在规定范围内");
 				return null;
 			}
 		}
@@ -834,11 +917,12 @@ public class EBaiduMapUtils {
 		return colorStr;
 	}
 
-	/** 
-	 * 根据手机的分辨率从 dp 的单位 转成为 px(像素) 
+	/**
+	 * 根据手机的分辨率从 dp 的单位 转成为 px(像素)
 	 */
 	public static int dip2px(Context context, float dpValue) {
 		final float scale = context.getResources().getDisplayMetrics().density;
 		return (int) (dpValue * scale + 0.5f);
 	}
+
 }

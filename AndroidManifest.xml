@@ -12,7 +12,7 @@
         android:label="@string/app_name" >
         <meta-data
             android:name="com.baidu.lbsapi.API_KEY"
-            android:value="Yw7OZG1INy4N4DQumYfaldgl" />
+            android:value="epQbaE0FIUOYxjkTD18hRbtVyStYjF9b" />
 
         <activity
             android:name="org.zywx.wbpalmstar.engine.EBrowserActivity"

@@ -1,15 +1,36 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <uexplugins>
-    <plugin
-        uexName="uexBaiduMap" version="3.1.32" build="32">
-        <info>32:为上海贝尔项目定制了气泡样式</info>
+    <!--为上海贝尔项目定制了气泡样式的定制版-->
+    <plugin 
+        uexName="uexBaiduMap" version="3.1.41.1" build="41">
+        <info>41:更新SDK,同步上海贝尔项目定制气泡逻辑</info>
+        <build>40:增加getCenter得到地图中心点方法</build>
+        <build>39:优化了getDistance的算法，使用新版本SDK自带工具类DistanceUtil进行计算，使计算值更为精准</build>
+        <build>38:更新SDK后appkey验证广播机制改变，由于onSDKReceiverError回调只为前端开发者所提供，所以使用Toast替代</build>
+        <build>37:修复了getCurrentLocation必须open才能使用的问题
+              37.1:修复了地理编码、反地理编码必须open才能使用的问题</build>
+        <build>36.1:增加版本号
+               36.2:更新SDK版本,将百度地图所有库导入
+               36.3:发现新版SDK，Demo里可以监听到key配置错误广播，但是插件里不可以，问题未知</build>
+        <build>35:在handleCloseBaiduMap中添加空指针判断，避免一些极端情况下程序崩溃
+              35.1:在handleCloseBaiduMap中再次添加空指针判断，捕捉mBrwView的空指针，并输出log
+              35.2:在poi搜索里增加一些log</build>
+        <build>34.1:增加了getDistance得到两点间直线距离方法
+                 2:在回调方法cbPoiSearchResult中增加distance字段，返回距离</build>
+        <build>33.1:增加了，当不打开地图View时，也可以调用poi搜索功能（目前支持城市检索，周边检索，区域检索）
+                  2:修复了打开地图再关闭地图，搜索poi无效的问题</build>
+        <build>32:1.增加底部卡片样式气泡；为上海贝尔项目定制了气泡样式
+                  2.卡片样式增加fontSize和fontColor字段
+                  3.修复卡片样式气泡无法隐藏问题
+                  4.修复无法自动读取子应用的widget/wgtRes里图片问题
+                  5.修复无法加载网络背景图片问题</build>
         <build>31:修复了当open时传入的x,y,w,h为double型时，抛出NumberFormatException的错误</build>
         <build>30:这是一个旧插件，旧引擎用的旧插件</build>
         <build>29:修复了持续定位时cbCurrentLocation回调不生效的问题</build>
         <!-- <build>28:修复open接口传入的中心点不生效的问题</build> -->
         <build>27:修改插件，使其支持config配置APIKey</build>
         <!-- <build>26:去掉插件中的ActivityGroup,配合引擎升级</build> -->
-        <info>25:国际化</info>
+        <build>25:国际化</build>
         <build>24:修改百度地图中引用的jar包，解除与百度导航插件之间的打包冲突问题</build>
         <build>23:修复地理编码接口当地址错误时程序崩溃的问题</build>
         <build>22:修复加入百度地图插件后uexLocation.openLocation()中的onchange事件不能使用问题</build>

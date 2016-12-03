@@ -11,6 +11,7 @@ public class EBaiduMapMarkerOverlayOptions extends EBaiduMapOverlayOptions {
 	private String bubbleTitle;
 	private String bubbleSubTitle;
 	private String bubbleBgImgPath;
+    private String bottomBubbleCard;
 	private int yOffset;
 	private boolean iUseYOffset = false;
 
@@ -25,7 +26,7 @@ public class EBaiduMapMarkerOverlayOptions extends EBaiduMapOverlayOptions {
 	public EBaiduMapMarkerOverlayOptions() {
 
 	}
-
+	
 	public String getLngStr() {
 		return lngStr;
 	}
@@ -89,6 +90,14 @@ public class EBaiduMapMarkerOverlayOptions extends EBaiduMapOverlayOptions {
 	public void setiUseYOffset(boolean iUseYOffset) {
 		this.iUseYOffset = iUseYOffset;
 	}
+
+    public String getBottomBubbleCard() {
+        return bottomBubbleCard;
+    }
+
+    public void setBottomBubbleCard(String bottomBubbleCard) {
+        this.bottomBubbleCard = bottomBubbleCard;
+    }
 
 	public String getType() {
 		return type;

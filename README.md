@@ -1,2 +1,3 @@
-# uexBaiduMapOldEngine_shanghaibeier
-uexBaiduMapOldEngine上海贝尔定制  为上海贝尔项目定制了气泡样式
+# uexBaiduMap
+## 旧引擎百度地图插件
+百度地图插件

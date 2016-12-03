@@ -2,43 +2,84 @@ package org.zywx.wbpalmstar.plugin.uexbaidumap;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.zywx.wbpalmstar.engine.EBrowserActivity;
 import org.zywx.wbpalmstar.engine.EBrowserView;
 import org.zywx.wbpalmstar.engine.universalex.EUExBase;
+import org.zywx.wbpalmstar.engine.universalex.EUExCallback;
+import org.zywx.wbpalmstar.plugin.uexbaidumap.function.GeoCoderFunction;
+import org.zywx.wbpalmstar.plugin.uexbaidumap.function.LocationFunction;
+import org.zywx.wbpalmstar.plugin.uexbaidumap.receiver.SDKReceiver;
+import org.zywx.wbpalmstar.plugin.uexbaidumap.utils.MLog;
 
 import android.app.Activity;
 import android.app.ActivityGroup;
 import android.app.LocalActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.os.Message;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.view.ViewGroup.LayoutParams;
 import android.widget.FrameLayout;
 import android.widget.RelativeLayout;
 
 import com.baidu.mapapi.SDKInitializer;
 import com.baidu.mapapi.map.BaiduMap;
+import com.baidu.mapapi.model.LatLng;
+import com.baidu.mapapi.utils.DistanceUtil;
 
 import java.util.Arrays;
 
+@SuppressWarnings("deprecation")
 public class EUExBaiduMap extends EUExBase implements Parcelable {
 
+	public static final String TAG = "uexBaiduMap";
+
+	/**
+	 * 百度地图是否初始化
+	 */
 	private static boolean isBaiduSdkInit = false;
+
+	/**
+	 * SDK广播接收器，主要为了监听appKey是否配置正确
+	 */
+	private SDKReceiver mSDKReceiver;
+
 	private static LocalActivityManager mgr;
+	private RelativeLayout.LayoutParams mParms;
+	private EBaiduMapBaseNoMapViewManager mapBaseNoMapViewManager;// 百度地图一些不需要打开地图的功能管理器
 
 	public EUExBaiduMap(Context context, EBrowserView inParent) {
 		super(context, inParent);
-		mgr = ((ActivityGroup) mContext).getLocalActivityManager();
-		if (isBaiduSdkInit == false) {
-			// 在使用 SDK 各组间之前初始化 context 信息，传入 ApplicationContext
-			SDKInitializer.initialize(context.getApplicationContext());
-			isBaiduSdkInit = true;
+		try {
+			mgr = ((ActivityGroup) mContext).getLocalActivityManager();
+			if (isBaiduSdkInit == false) {
+				// 在使用 SDK 各组间之前初始化 context 信息，传入 ApplicationContext
+				SDKInitializer.initialize(context.getApplicationContext());
+				isBaiduSdkInit = true;
+			}
+
+			// 注册 SDK 广播接收器
+			IntentFilter intentFilter = new IntentFilter();
+			intentFilter.addAction(SDKInitializer.SDK_BROADTCAST_ACTION_STRING_PERMISSION_CHECK_OK);
+			intentFilter.addAction(SDKInitializer.SDK_BROADTCAST_ACTION_STRING_PERMISSION_CHECK_ERROR);
+			intentFilter.addAction(SDKInitializer.SDK_BROADCAST_ACTION_STRING_NETWORK_ERROR);
+			mSDKReceiver = new SDKReceiver();
+			mContext.registerReceiver(mSDKReceiver, intentFilter);
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
+	}
+
+	public EBrowserView getEBrowserView() {
+		return mBrwView;
 	}
 
 	// uexBaiduMap.open(x, y, width, height, longitude, latitude)
@@ -61,6 +102,10 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 
 	public void setCenter(String[] params) {
 		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_SETCENTER, params);
+	}
+
+	public void getCenter(String[] params) {
+		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_GETCENTER, params);
 	}
 
 	public void setZoomLevel(String[] params) {
@@ -201,6 +246,7 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 
 	public void geocode(String[] params) {
 		Log.i("djf", "geocode->" + Arrays.toString(params));
+		MLog.getIns().i("geocode = " + Arrays.toString(params));
 		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_GEOCODE, params);
 	}
 
@@ -209,7 +255,9 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 	}
 
 	public void getCurrentLocation(String[] params) {
+		MLog.getIns().i("start");
 		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_GETCURRENTLOCATION, params);
+		MLog.getIns().i("end");
 	}
 
 	public void startLocation(String[] params) {
@@ -240,6 +288,11 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_ZOOMCONTROLSENABLED, params);
 	}
 
+	/* 计算两点之间的距离 by waka */
+	public void getDistance(String[] params) {
+		sendMessageWithType(EBaiduMapUtils.MAP_MSG_CODE_GETDISTANCE, params);
+	}
+
 	@Override
 	protected boolean clean() {
 		close(null);
@@ -250,164 +303,175 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 		String activityId = EBaiduMapUtils.MAP_ACTIVITY_ID + EUExBaiduMap.this.hashCode();
 		Activity activity = mgr.getActivity(activityId);
 
-		if (activity != null && activity instanceof EBaiduMapBaseActivity) {
-			String[] params = msg.getData().getStringArray(EBaiduMapUtils.MAP_FUN_PARAMS_KEY);
-			EBaiduMapBaseActivity eBaiduMapBaseActivity = ((EBaiduMapBaseActivity) activity);
+		String[] params = msg.getData().getStringArray(EBaiduMapUtils.MAP_FUN_PARAMS_KEY);
 
-			switch (msg.what) {
-			case EBaiduMapUtils.MAP_MSG_CODE_CLOSE:
-				handleCloseBaiduMap(params, eBaiduMapBaseActivity, mgr);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETMAPTYPE:
-				handleSetMapType(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETTRAFFIC:
-				handleSetTraffic(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETCENTER:
-				handleSetCenter(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ZOOMTO:
-				handleZoomTo(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ZOOMIN:
-				handleZoomIn(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ZOOMOUT:
-				handleZoomOut(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ROTATE:
-				handleRotate(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_OVERLOOK:
-				handleOverlook(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ZOOMENABLE:
-				handleZoomEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ROTATEENABLE:
-				handleRotateEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_COMPASSENABLE:
-				handleCompassEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SCROLLENABLE:
-				handleScrollEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_OVERLOOKENABLE:
-				handleOverlookEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDMARKERSOVERLAY:
-				handleAddMarkersOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETMARKERSOVERLAY:
-				handleSetMarkeOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SHOWBUBBLE:
-				handleShowBubble(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_HIDEBUBBLE:
-				handleHideBubble(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_REMOVEMAKERSOVER:
-				handleRemoveMakersOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_POISEARCHINCITY:
-				handlePoiSearchInCity(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_POINEARBYSEARCH:
-				handlePoiNearbySearch(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_POIBOUNDSEARCH:
-				handlePoiBoundSearch(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_BUSLINESEARCH:
-				handleBusLineSearch(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_REMOVEBUSLINE:
-				handleRemoveBusLine(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_PREBUSLINENODE:
-				handlePreBusLineNode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_NEXTBUSLINENODE:
-				handleNextBusLineNode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SEARCHROUTEPLAN:
-				handleSearchRoutePlan(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_REMOVEROUTEPLAN:
-				handleRemoveRoutePlan(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_PREROUTENODE:
-				handlePreRouteNode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_NEXTROUTENODE:
-				handleNextRouteNode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_GEOCODE:
-				handleGeocode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_REVERSEGEOCODE:
-				handleReverseGeocode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_GETCURRENTLOCATION:
-				handleGetCurrentLocation(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_STARTLOCATION:
-				handleStartLocation(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_STOPTLOCATION:
-				handleStopLocation(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETMYLOCATIONENABLE:
-				handleSetMyLocationEnable(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SETUSERTRACKINGMODE:
-				handleSetUserTrackingMode(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_REMOVEOVERLAY:
-				handleRemoveOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDDOTOVERLAY:
-				handleAddDotOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDPOLYLINEOVERLAY:
-				handleAddPolylineOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDARCOVERLAY:
-				handleAddArcOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDCIRCLEOVERLAY:
-				handleAddCircleOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDPOLYGONOVERLAY:
-				handleAddPolygonOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDGROUNDOVERLAY:
-				handleAddGroundOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ADDTEXTOVERLAY:
-				handleAddTextOverlay(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_HIDEMAP:
-				handleHideMap(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_SHOWMAP:
-				handleShowMap(params, eBaiduMapBaseActivity);
-				break;
-			case EBaiduMapUtils.MAP_MSG_CODE_ZOOMCONTROLSENABLED:
-				handleZoomControlsEnabled(params, eBaiduMapBaseActivity);
-				break;
-			default:
-				break;
+		EBaiduMapBaseActivity eBaiduMapBaseActivity = null;
+		if (activity != null && activity instanceof EBaiduMapBaseActivity) {
+			eBaiduMapBaseActivity = ((EBaiduMapBaseActivity) activity);
+		}
+
+		switch (msg.what) {
+		case EBaiduMapUtils.MAP_MSG_CODE_CLOSE:
+			if (eBaiduMapBaseActivity == null) {
+				return;
 			}
+			handleCloseBaiduMap(params, eBaiduMapBaseActivity, mgr);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETMAPTYPE:
+			handleSetMapType(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETTRAFFIC:
+			handleSetTraffic(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETCENTER:
+			handleSetCenter(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_GETCENTER:
+			handleGetCenter(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ZOOMTO:
+			handleZoomTo(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ZOOMIN:
+			handleZoomIn(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ZOOMOUT:
+			handleZoomOut(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ROTATE:
+			handleRotate(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_OVERLOOK:
+			handleOverlook(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ZOOMENABLE:
+			handleZoomEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ROTATEENABLE:
+			handleRotateEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_COMPASSENABLE:
+			handleCompassEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SCROLLENABLE:
+			handleScrollEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_OVERLOOKENABLE:
+			handleOverlookEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDMARKERSOVERLAY:
+			handleAddMarkersOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETMARKERSOVERLAY:
+			handleSetMarkeOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SHOWBUBBLE:
+			handleShowBubble(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_HIDEBUBBLE:
+			handleHideBubble(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_REMOVEMAKERSOVER:
+			handleRemoveMakersOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_POISEARCHINCITY:
+			handlePoiSearchInCity(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_POINEARBYSEARCH:
+			handlePoiNearbySearch(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_POIBOUNDSEARCH:
+			handlePoiBoundSearch(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_BUSLINESEARCH:
+			handleBusLineSearch(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_REMOVEBUSLINE:
+			handleRemoveBusLine(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_PREBUSLINENODE:
+			handlePreBusLineNode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_NEXTBUSLINENODE:
+			handleNextBusLineNode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SEARCHROUTEPLAN:
+			handleSearchRoutePlan(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_REMOVEROUTEPLAN:
+			handleRemoveRoutePlan(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_PREROUTENODE:
+			handlePreRouteNode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_NEXTROUTENODE:
+			handleNextRouteNode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_GEOCODE:
+			handleGeocode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_REVERSEGEOCODE:
+			handleReverseGeocode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_GETCURRENTLOCATION:
+			handleGetCurrentLocation(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_STARTLOCATION:
+			handleStartLocation(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_STOPTLOCATION:
+			handleStopLocation(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETMYLOCATIONENABLE:
+			handleSetMyLocationEnable(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SETUSERTRACKINGMODE:
+			handleSetUserTrackingMode(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_REMOVEOVERLAY:
+			handleRemoveOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDDOTOVERLAY:
+			handleAddDotOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDPOLYLINEOVERLAY:
+			handleAddPolylineOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDARCOVERLAY:
+			handleAddArcOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDCIRCLEOVERLAY:
+			handleAddCircleOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDPOLYGONOVERLAY:
+			handleAddPolygonOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDGROUNDOVERLAY:
+			handleAddGroundOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ADDTEXTOVERLAY:
+			handleAddTextOverlay(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_HIDEMAP:
+			handleHideMap(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_SHOWMAP:
+			handleShowMap(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_ZOOMCONTROLSENABLED:
+			handleZoomControlsEnabled(params, eBaiduMapBaseActivity);
+			break;
+		case EBaiduMapUtils.MAP_MSG_CODE_GETDISTANCE:// 计算两点之间的距离 by waka
+			handleGetDistance(params);
+			break;
+
+		default:
+			break;
 		}
 	}
 
 	@Override
 	public void onHandleMessage(Message msg) {
-		// TODO Auto-generated method stub
 		// super.onHandleMessage(msg);
 		if (msg.what == EBaiduMapUtils.MAP_MSG_CODE_OPEN) {
 			handleOpen(msg);
@@ -468,9 +532,16 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 		}
 	}
 
-	private void handleCloseBaiduMap(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity,
-			LocalActivityManager mgr) {
+	private void handleCloseBaiduMap(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity, LocalActivityManager mgr) {
 		View decorView = eBaiduMapBaseActivity.getWindow().getDecorView();
+		if (decorView == null) {
+			Log.e("uexBaiduMap", "【handleCloseBaiduMap】 decorView == null");
+			return;
+		}
+		if (mBrwView == null) {
+			Log.e("uexBaiduMap", "【handleCloseBaiduMap】 mBrwView == null");
+			return;
+		}
 		mBrwView.removeViewFromCurrentWindow(decorView);
 		String activityId = EBaiduMapUtils.MAP_ACTIVITY_ID + EUExBaiduMap.this.hashCode();
 		mgr.destroyActivity(activityId, true);
@@ -511,6 +582,13 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 				isUseAnimate = ((v == 1) ? true : false);
 			}
 			eBaiduMapBaseActivity.setCenter(lng, lat, isUseAnimate);
+		} catch (Exception e) {
+		}
+	}
+
+	private void handleGetCenter(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
+		try {
+			eBaiduMapBaseActivity.getCenter();
 		} catch (Exception e) {
 		}
 	}
@@ -670,14 +748,25 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 			String city = json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_CITY);
 			String searchKey = json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_SEARCHKEY);
 			int pageNum = Integer.parseInt(json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_PAGENUM));
-			eBaiduMapBaseActivity.poiSearchInCity(city, searchKey, pageNum);
+
+			// change by waka
+			if (eBaiduMapBaseActivity != null) {
+				eBaiduMapBaseActivity.poiSearchInCity(city, searchKey, pageNum);
+			} else {
+				if (mapBaseNoMapViewManager == null) {
+					mapBaseNoMapViewManager = new EBaiduMapBaseNoMapViewManager(mContext, this);
+				}
+				mapBaseNoMapViewManager.poiSearchInCity(city, searchKey, pageNum);
+			}
 		} catch (Exception e) {
 		}
 	}
 
 	private void handlePoiNearbySearch(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
 		try {
+			Log.i("uexBaiduMap", "【EUExBaiduMap】【handlePoiNearbySearch】start");
 			if (params == null || params.length == 0) {
+				Log.i("uexBaiduMap", "【EUExBaiduMap】【handlePoiNearbySearch】params == null || params.length == 0");
 				return;
 			}
 			JSONObject json = new JSONObject(params[0]);
@@ -686,8 +775,19 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 			String radius = json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_RADIUS);
 			String searchKey = json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_SEARCHKEY);
 			String pageNum = json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_PAGENUM);
-			eBaiduMapBaseActivity.poiNearbySearch(Double.parseDouble(lng), Double.parseDouble(lat),
-					(int) Float.parseFloat(radius), searchKey, Integer.parseInt(pageNum));
+
+			// change by waka
+			if (eBaiduMapBaseActivity != null) {
+				Log.i("uexBaiduMap", "【EUExBaiduMap】【handlePoiNearbySearch】eBaiduMapBaseActivity");
+				eBaiduMapBaseActivity.poiNearbySearch(Double.parseDouble(lng), Double.parseDouble(lat), (int) Float.parseFloat(radius), searchKey, Integer.parseInt(pageNum));
+			} else {
+				Log.i("uexBaiduMap", "【EUExBaiduMap】【handlePoiNearbySearch】mapBaseNoMapViewManager");
+				if (mapBaseNoMapViewManager == null) {
+					Log.i("uexBaiduMap", "【EUExBaiduMap】【handlePoiNearbySearch】mapBaseNoMapViewManager  == null");
+					mapBaseNoMapViewManager = new EBaiduMapBaseNoMapViewManager(mContext, this);
+				}
+				mapBaseNoMapViewManager.poiNearbySearch(Double.parseDouble(lng), Double.parseDouble(lat), (int) Float.parseFloat(radius), searchKey, Integer.parseInt(pageNum));
+			}
 		} catch (Exception e) {
 		}
 	}
@@ -710,10 +810,24 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 			// 5
 			String searchKey = jsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_SEARCHKEY);
 			String pageNum = jsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_PAGENUM);
-			eBaiduMapBaseActivity.poiBoundSearch(Double.parseDouble(lngNE), Double.parseDouble(latNE),
-					Double.parseDouble(lngSW), Double.parseDouble(latSW), searchKey, Integer.parseInt(pageNum));
-		} catch (Exception e) {
+
+			// change by waka
+			if (eBaiduMapBaseActivity != null) {
+				eBaiduMapBaseActivity.poiBoundSearch(Double.parseDouble(lngNE), Double.parseDouble(latNE), Double.parseDouble(lngSW), Double.parseDouble(latSW), searchKey, Integer.parseInt(pageNum));
+			} else {
+				if (mapBaseNoMapViewManager == null) {
+					mapBaseNoMapViewManager = new EBaiduMapBaseNoMapViewManager(mContext, this);
+				}
+				mapBaseNoMapViewManager.poiBoundSearch(Double.parseDouble(lngNE), Double.parseDouble(latNE), Double.parseDouble(lngSW), Double.parseDouble(latSW), searchKey,
+						Integer.parseInt(pageNum));
+			}
+		} catch (
+
+		Exception e)
+
+		{
 		}
+
 	}
 
 	private void handleBusLineSearch(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
@@ -784,14 +898,20 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 		try {
 			if (params != null && params.length > 0) {
 				JSONObject jsonObject = new JSONObject(params[0]);
-				if (jsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_CITY)
-						&& jsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_ADDRESS)) {
+				if (jsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_CITY) && jsonObject.has(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_ADDRESS)) {
 					String cityStr = jsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_CITY);
 					String addrStr = jsonObject.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_ADDRESS);
-					eBaiduMapBaseActivity.geocode(cityStr, addrStr);
+					// eBaiduMapBaseActivity.geocode(cityStr, addrStr);
+
+					// 不打开地图也能用地理编码
+					GeoCoderFunction geoCoderFunction = new GeoCoderFunction(this);
+					geoCoderFunction.geocode(cityStr, addrStr);
+
 				}
 			}
 		} catch (Exception e) {
+			e.getStackTrace();
+			MLog.getIns().e(e);
 		}
 	}
 
@@ -800,16 +920,29 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 			JSONObject json = new JSONObject(params[0]);
 			double lng = Double.parseDouble(json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_LNG));
 			double lat = Double.parseDouble(json.getString(EBaiduMapUtils.MAP_PARAMS_JSON_KEY_LAT));
-			eBaiduMapBaseActivity.reverseGeoCode(lng, lat);
+			// eBaiduMapBaseActivity.reverseGeoCode(lng, lat);
+
+			// 不打开地图也能用反地理编码
+			GeoCoderFunction geoCoderFunction = new GeoCoderFunction(this);
+			geoCoderFunction.reverseGeoCode(lng, lat);
+
 		} catch (Exception e) {
+			MLog.getIns().e(e);
 		}
 	}
 
 	private void handleGetCurrentLocation(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
+		MLog.getIns().i("start");
 		try {
-			eBaiduMapBaseActivity.getCurrentLocation();
+			// eBaiduMapBaseActivity.getCurrentLocation();
+
+			LocationFunction function = new LocationFunction(mContext, this);
+			function.start();
+
 		} catch (Exception e) {
+			MLog.getIns().e(e);
 		}
+		MLog.getIns().i("end");
 	}
 
 	private void handleStartLocation(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
@@ -857,6 +990,7 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 	}
 
 	private void addView2CurrentWindow(View child, RelativeLayout.LayoutParams parms) {
+		mParms = parms;
 		int l = (int) (parms.leftMargin);
 		int t = (int) (parms.topMargin);
 		int w = parms.width;
@@ -869,15 +1003,44 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 		mBrwView.addViewToCurrentWindow(child, lp);
 	}
 
+	public void addCardView2Window(View child) {
+		int mParmsLeft = (int) (mParms.leftMargin);
+		int mParmsTop = (int) (mParms.topMargin);
+		int mParmsWidth = mParms.width;
+		int mParmsHeight = mParms.height;
+		int bottomMargin = 60;
+		int leftMargin = 50;
+		int rightMargin = 50;
+		EBrowserActivity activity = (EBrowserActivity) mContext;
+		if (activity != null && activity instanceof EBrowserActivity) {
+			DisplayMetrics dm = new DisplayMetrics();
+			activity.getWindowManager().getDefaultDisplay().getMetrics(dm);
+			int heightPixels = dm.heightPixels;
+			int diffHei = heightPixels - mParmsTop - mParmsHeight;
+			if (diffHei > 0) {
+				bottomMargin = diffHei + bottomMargin;
+			}
+			int widthPixels = dm.widthPixels;
+			int diffWid = widthPixels - mParmsWidth - mParmsLeft;
+			if (diffWid > 0) {
+				rightMargin = diffWid + rightMargin;
+			}
+		}
+		FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+		lp.gravity = Gravity.BOTTOM;
+		lp.bottomMargin = bottomMargin;
+		lp.leftMargin = mParmsLeft + leftMargin;
+		lp.rightMargin = rightMargin;
+		mBrwView.addViewToCurrentWindow(child, lp);
+	}
+
 	@Override
 	public int describeContents() {
-		// TODO Auto-generated method stub
 		return 0;
 	}
 
 	@Override
 	public void writeToParcel(Parcel dest, int flags) {
-		// TODO Auto-generated method stub
 	}
 
 	private void handleAddTextOverlay(String[] params, EBaiduMapBaseActivity eBaiduMapBaseActivity) {
@@ -959,6 +1122,43 @@ public class EUExBaiduMap extends EUExBase implements Parcelable {
 				eBaiduMapBaseActivity.zoomControlsEnabled(true);
 			}
 		} catch (Exception e) {
+		}
+	}
+
+	private void handleGetDistance(String[] params) {
+		if (params.length < 4) {
+			return;
+		}
+		try {
+
+			double lat1 = Double.valueOf(params[0]);
+			double lon1 = Double.valueOf(params[1]);
+			double lat2 = Double.valueOf(params[2]);
+			double lon2 = Double.valueOf(params[3]);
+
+			double distance = -1;
+
+			LatLng p1 = new LatLng(lat1, lon1);
+			LatLng p2 = new LatLng(lat2, lon2);
+			distance = DistanceUtil.getDistance(p1, p2);
+
+			// // 判断，如果是小距离
+			// if ((Math.abs(lat1 - lat2) < MyDistanceUtils.SMALL_DISTANCE_FLAG)
+			// && (Math.abs(lon1 - lon2) < MyDistanceUtils.SMALL_DISTANCE_FLAG))
+			// {
+			// distance = MyDistanceUtils.getShortDistance(lon1, lat1, lon2,
+			// lat2);
+			// }
+			// // 大距离
+			// else {
+			// distance = MyDistanceUtils.getLongDistance(lon1, lat1, lon2,
+			// lat2);
+			// }
+
+			jsCallback(EBaiduMapUtils.MAP_FUN_CB_GET_DISTANCE, 0, EUExCallback.F_C_TEXT, "" + distance);
+
+		} catch (NumberFormatException e) {
+			e.getStackTrace();
 		}
 	}
 }

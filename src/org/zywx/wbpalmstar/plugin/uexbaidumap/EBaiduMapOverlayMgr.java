@@ -1,11 +1,10 @@
 package org.zywx.wbpalmstar.plugin.uexbaidumap;
 
-import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.widget.ImageView;
+import android.util.Log;
 
 import com.baidu.mapapi.map.*;
 import com.baidu.mapapi.map.BaiduMap.OnMarkerClickListener;
@@ -150,8 +149,11 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 
 				return;
 			}
-
-			mapMarkerOverlay.setBubbleShow(true);
+			if (mapMarkerOverlay.isShowBottomCard()) {
+				mapMarkerOverlay.setBottomCardShow(mMapView, true);
+			} else {
+				mapMarkerOverlay.setBubbleShow(true);
+			}
 
 		} catch (Exception e) {
 			// TODO: handle exception
@@ -159,11 +161,14 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 	}
 
 	public void hideBubble() {
-
 		try {
-
 			mBaiduMap.hideInfoWindow();
-
+			for (String s : mEbaiduMapOverlays.keySet()) {
+				EBaiduMapMarkerOverlay mapMarkerOverlay = (EBaiduMapMarkerOverlay) mEbaiduMapOverlays.get(s);
+				if (mapMarkerOverlay.isShowBottomCard()) {
+					mapMarkerOverlay.setBottomCardShow(mMapView, false);
+				}
+			}
 		} catch (Exception e) {
 			// TODO: handle exception
 		}
@@ -240,6 +245,8 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 	}
 
 	public void removeOverlay(String overlayInfo) {
+
+		Log.i("uexBaiduMap", "【removeOverlay】 removeOverlay start");
 		String[] names = overlayInfo.split(",");
 		for (int i = 0; i < names.length; i++) {
 			String name = names[i];
@@ -247,8 +254,10 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 			if (overlay != null) {
 				overlay.clearOverlay();
 				mEbaiduMapOverlays.remove(name);
+				Log.i("uexBaiduMap", "【removeOverlay】 removeOverlay name=" + name);
 			}
 		}
+		Log.i("uexBaiduMap", "【removeOverlay】 removeOverlay end");
 	}
 
 	public void addPolylineOverlay(String polylineInfo) {
@@ -312,10 +321,17 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 		}
 	}
 
+	// TODO
 	public void addCircleOverlay(String circleInfo) {
 		try {
+			Log.i("uexBaiduMap", "【addCircleOverlay】 start");
 			EBaiduMapCircleOptions info = EBaiduMapUtils.parseCircleInfoJson(circleInfo);
-			if (info == null || mEbaiduMapOverlays.containsKey(info.getIdStr())) {
+			if (info == null) {
+				Log.e("uexBaiduMap", "【addCircleOverlay】 解析JSON发生错误,EBaiduMapCircleOptions info == null");
+				return;
+			}
+			if (mEbaiduMapOverlays.containsKey(info.getIdStr())) {
+				Log.e("uexBaiduMap", "【addCircleOverlay】 已经包含相同id,mEbaiduMapOverlays.containsKey(info.getIdStr())");
 				return;
 			}
 			int radius = (int) Float.parseFloat(info.getRadius());
@@ -331,7 +347,9 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 			if (info.getzIndexStr() != null) {
 				circleOptions.zIndex((int) Float.parseFloat(info.getzIndexStr()));
 			}
+			Log.i("uexBaiduMap", "【addCircleOverlay】 开始画圆");
 			Circle circle = (Circle) mBaiduMap.addOverlay(circleOptions);
+			Log.i("uexBaiduMap", "【addCircleOverlay】 完成画圆");
 			if (info.getExtraStr() != null) {
 				Bundle b = new Bundle();
 				b.putString(info.getIdStr(), info.getExtraStr());
@@ -342,6 +360,7 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 			eBaiduMapCircleOverlay.setCircle(circle);
 			mEbaiduMapOverlays.put(info.getIdStr(), eBaiduMapCircleOverlay);
 		} catch (Exception e) {
+			Log.e("uexBaiduMap", "【addCircleOverlay】 抛出异常，catch (Exception e)", e);
 			e.printStackTrace();
 		}
 	}
@@ -502,7 +521,6 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 		EBaiduMapMarkerOverlay markerOverlay = new EBaiduMapMarkerOverlay(markerId, mContext, mBaiduMap);
 
 		markerOverlay.setMarker(marker);
-
 		// 获得type，根据type的值决定使用哪一种气泡
 		String type = markerOverlayOptions.getType();
 		boolean isUse = markerOverlayOptions.isiUseYOffset();
@@ -543,12 +561,20 @@ public class EBaiduMapOverlayMgr implements OnMarkerClickListener {
 			mapMarkerOverlay.getMarker().setPosition(llMarker);
 		}
 		if (markerOverlayOptions.getBubbleTitle() != null) {
-			boolean isUse = markerOverlayOptions.isiUseYOffset();
-			int yOffset = markerOverlayOptions.getyOffset();
-			String title = markerOverlayOptions.getBubbleTitle();
-			String subTitle = markerOverlayOptions.getBubbleSubTitle();
+			String bottomBubbleCard = markerOverlayOptions.getBottomBubbleCard();
 			String bgImgPath = markerOverlayOptions.getBubbleBgImgPath();
-			mapMarkerOverlay.setBubbleViewData(title, subTitle, bgImgPath, yOffset, isUse);
+			if (bottomBubbleCard != null && !bottomBubbleCard.isEmpty()) {
+				mapMarkerOverlay.setBottomBubbleCard(mMapView, bottomBubbleCard, bgImgPath);
+			} else {
+				if (mapMarkerOverlay.isShowBottomCard()) {
+					mapMarkerOverlay.setBottomCardShow(null, false);
+				}
+				boolean isUse = markerOverlayOptions.isiUseYOffset();
+				int yOffset = markerOverlayOptions.getyOffset();
+				String title = markerOverlayOptions.getBubbleTitle();
+				String subTitle = markerOverlayOptions.getBubbleSubTitle();
+				mapMarkerOverlay.setBubbleViewData(title, subTitle, bgImgPath, yOffset, isUse);
+			}
 		}
 	}
 
